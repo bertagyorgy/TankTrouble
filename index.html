@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <title>Tank Battle - Tactical AI</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #111; font-family: 'Segoe UI', sans-serif; color: white; display: flex; align-items: center; justify-content: center; height: 100vh; }
+        #menu { text-align: center; background: #222; padding: 40px; border-radius: 15px; border: 3px solid #ffcc00; z-index: 10; }
+        h1 { font-size: 50px; color: #ffcc00; margin-bottom: 20px; text-transform: uppercase; letter-spacing: 5px; }
+        button { padding: 15px 35px; font-size: 20px; cursor: pointer; margin: 10px; border: none; background: #ffcc00; color: #000; font-weight: bold; border-radius: 8px; transition: 0.2s; }
+        button:hover { background: #e6b800; transform: scale(1.05); }
+        canvas { background: #eee; display: none; border: 8px solid #444; }
+        #game-ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: none; }
+        #score-board { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: #fff; padding: 10px 40px; border-radius: 30px; color: #000; font-size: 24px; font-weight: bold; border: 3px solid #444; }
+        #back-btn { position: absolute; top: 20px; right: 20px; pointer-events: auto; padding: 10px 20px; background: #ff4444; color: white; border-radius: 5px; cursor: pointer; border: none; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div id="menu">
+        <h1>TANK BATTLE</h1>
+        <button onclick="startGame('bot')">BOT ELLEN</button>
+        <button onclick="startGame('multi')">2 JÁTÉKOS</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="game-ui">
+        <button id="back-btn" onclick="backToMenu()">VISSZA</button>
+        <div id="score-board">P1: 0 | P2: 0</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const menu = document.getElementById('menu');
+        const gameUI = document.getElementById('game-ui');
+        const scoreBoard = document.getElementById('score-board');
+
+        const CELL_SIZE = 120; 
+        const COLS = 8;
+        const ROWS = 6;
+        canvas.width = COLS * CELL_SIZE;
+        canvas.height = ROWS * CELL_SIZE;
+
+        let gameActive = false;
+        let gameMode = 'multi';
+        let score = { p1: 0, p2: 0 };
+        let walls = [];
+        let tanks = [];
+        let bullets = [];
+        let keys = {};
+
+        window.onkeydown = (e) => keys[e.code] = true;
+        window.onkeyup = (e) => keys[e.code] = false;
+
+        class Tank {
+            constructor(x, y, color, controls) {
+                this.x = x; this.y = y;
+                this.color = color;
+                this.angle = 0;
+                this.controls = controls;
+                this.radius = 18;
+                this.speed = 2.8;
+                this.ammo = 5;
+                this.reloading = false;
+                this.reloadStart = 0;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.angle);
+                ctx.fillStyle = this.color;
+                ctx.fillRect(-18, -18, 36, 36);
+                ctx.strokeStyle = "#000"; ctx.lineWidth = 2;
+                ctx.strokeRect(-18, -18, 36, 36);
+                ctx.fillStyle = "#333";
+                ctx.fillRect(0, -5, 25, 10);
+                ctx.restore();
+            }
+
+            update() {
+                if (this.reloading && Date.now() > this.reloadStart + 15000) {
+                    this.reloading = false; this.ammo = 5;
+                }
+
+                if (keys[this.controls.left]) this.angle -= 0.05;
+                if (keys[this.controls.right]) this.angle += 0.05;
+
+                let dx = 0, dy = 0;
+                if (keys[this.controls.up]) {
+                    dx = Math.cos(this.angle) * this.speed;
+                    dy = Math.sin(this.angle) * this.speed;
+                }
+                if (keys[this.controls.down]) {
+                    dx = -Math.cos(this.angle) * this.speed;
+                    dy = -Math.sin(this.angle) * this.speed;
+                }
+
+                if (!checkWallCollision(this.x + dx, this.y, this.radius)) this.x += dx;
+                if (!checkWallCollision(this.x, this.y + dy, this.radius)) this.y += dy;
+
+                this.x = Math.max(this.radius + 16, Math.min(canvas.width - this.radius - 16, this.x));
+                this.y = Math.max(this.radius + 16, Math.min(canvas.height - this.radius - 16, this.y));
+
+                if (keys[this.controls.shoot] && this.ammo > 0 && !this.reloading) {
+                    this.shoot(); keys[this.controls.shoot] = false;
+                }
+            }
+
+            shoot() {
+                let muzX = this.x + Math.cos(this.angle) * 32;
+                let muzY = this.y + Math.sin(this.angle) * 32;
+                if (!checkWallCollision(muzX, muzY, 5)) {
+                    bullets.push(new Bullet(muzX, muzY, this.angle));
+                    this.ammo--;
+                    if (this.ammo <= 0) { this.reloading = true; this.reloadStart = Date.now(); }
+                }
+            }
+        }
+
+        class Bullet {
+            constructor(x, y, angle) {
+                this.x = x; this.y = y;
+                this.vx = Math.cos(angle) * 3.6;
+                this.vy = Math.sin(angle) * 3.6;
+                this.birth = Date.now();
+                this.radius = 4;
+            }
+            update() {
+                let nx = this.x + this.vx, ny = this.y + this.vy;
+                if (checkWallCollision(nx, this.y, this.radius)) this.vx *= -1; else this.x = nx;
+                if (checkWallCollision(this.x, ny, this.radius)) this.vy *= -1; else this.y = ny;
+                tanks.forEach((t, i) => {
+                    if (Math.hypot(t.x-this.x, t.y-this.y) < t.radius + this.radius) endRound(i);
+                });
+            }
+            draw() {
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
+                ctx.fillStyle = "black"; ctx.fill();
+            }
+        }
+
+        function generateMaze() {
+            walls = [];
+            const FW = 15;
+            walls.push({x:0, y:0, w:canvas.width, h:FW});
+            walls.push({x:0, y:canvas.height-FW, w:canvas.width, h:FW});
+            walls.push({x:0, y:0, w:FW, h:canvas.height});
+            walls.push({x:canvas.width-FW, y:0, w:FW, h:canvas.height});
+
+            for (let r = 1; r < ROWS; r++) {
+                for (let c = 1; c < COLS; c++) {
+                    if (Math.random() > 0.82) walls.push({x: c*CELL_SIZE, y: r*CELL_SIZE, w: CELL_SIZE, h: 12});
+                    if (Math.random() > 0.82) walls.push({x: c*CELL_SIZE, y: r*CELL_SIZE, w: 12, h: CELL_SIZE});
+                }
+            }
+            walls = walls.filter(w => {
+                let d1 = Math.hypot(w.x - 80, w.y - 80);
+                let d2 = Math.hypot(w.x - (canvas.width-80), w.y - (canvas.height-80));
+                let isFrame = w.x === 0 || w.y === 0 || w.x >= canvas.width-15 || w.y >= canvas.height-15;
+                return isFrame || (d1 > 160 && d2 > 160);
+            });
+        }
+
+        function checkWallCollision(x, y, r) {
+            return walls.some(w => x + r > w.x && x - r < w.x + w.w && y + r > w.y && y - r < w.y + w.h);
+        }
+
+        function canSee(bot, target) {
+            for (let i = 0.05; i <= 1; i += 0.05) {
+                if (checkWallCollision(bot.x + (target.x-bot.x)*i, bot.y + (target.y-bot.y)*i, 5)) return false;
+            }
+            return true;
+        }
+
+        function botAI() {
+            let bot = tanks[1];
+            let target = tanks[0];
+
+            // Reload kezelés
+            if (bot.reloading && Date.now() > bot.reloadStart + 15000) {
+                bot.reloading = false;
+                bot.ammo = 5;
+            }
+
+            let angleToPlayer = Math.atan2(
+                target.y - bot.y,
+                target.x - bot.x
+            );
+
+            let dist = Math.hypot(
+                target.x - bot.x,
+                target.y - bot.y
+            );
+
+            /* =====================
+            1. GOLYÓ ELKERÜLÉS
+            ===================== */
+            let danger = bullets.find(b =>
+                Math.hypot(b.x - bot.x, b.y - bot.y) < 100
+            );
+
+            if (danger) {
+                let escapeAngle = Math.atan2(
+                    bot.y - danger.y,
+                    bot.x - danger.x
+                );
+
+                let avoid = avoidanceAngle(bot);
+                botRotate(bot, escapeAngle + avoid);
+                botMove(bot, 0.85);
+                return;
+            }
+
+            /* =====================
+            2. HA LÁTJA A JÁTÉKOST
+            ===================== */
+            if (canSee(bot, target)) {
+                let avoid = avoidanceAngle(bot);
+                botRotate(bot, angleToPlayer + avoid);
+
+                if (!bot.reloading &&
+                    Math.abs(
+                        normalizeAngle(angleToPlayer - bot.angle)
+                    ) < 0.2 &&
+                    Math.random() > 0.97) {
+                    bot.shoot();
+                }
+
+                if (bot.reloading) {
+                    if (dist < 300) botMove(bot, -0.4);
+                } else if (dist > 200) {
+                    botMove(bot, 0.6);
+                }
+
+                return;
+            }
+
+            /* =====================
+            3. NEM LÁT → KÖZELÍT
+            ===================== */
+            let avoid = avoidanceAngle(bot);
+            botRotate(bot, angleToPlayer + avoid);
+            botMove(bot, 0.55);
+        }
+
+
+
+        function checkRay(bot, angle) {
+            for(let d=20; d<160; d+=20) {
+                if (checkWallCollision(bot.x + Math.cos(angle)*d, bot.y + Math.sin(angle)*d, 15)) return d;
+            }
+            return 200;
+        }
+
+        // Remegésmentes forgatás
+        function botRotate(bot, targetAngle) {
+            let diff = normalizeAngle(targetAngle - bot.angle);
+            // Ha 0.05 radiánnál (kb 3 fok) kisebb az eltérés, nem korrigál (nincs remegés)
+            if (Math.abs(diff) > 0.05) {
+                bot.angle += diff * 0.1;
+            }
+        }
+
+        function botMove(bot, speedMult) {
+            let dx = Math.cos(bot.angle) * bot.speed * speedMult;
+            let dy = Math.sin(bot.angle) * bot.speed * speedMult;
+            // Biztonsági puffer fal mellett
+            if (!checkWallCollision(bot.x + dx, bot.y, bot.radius + 8)) bot.x += dx;
+            if (!checkWallCollision(bot.x, bot.y + dy, bot.radius + 8)) bot.y += dy;
+        }
+
+        function normalizeAngle(a) {
+            while(a < -Math.PI) a += Math.PI*2;
+            while(a > Math.PI) a -= Math.PI*2;
+            return a;
+        }
+        function avoidanceAngle(bot) {
+            const samples = [
+                { a: 0.0,  w: 1.2 },  // előre
+                { a: 0.6,  w: 0.9 },  // bal
+                { a:-0.6,  w: 0.9 },  // jobb
+                { a: 1.1,  w: 0.4 },
+                { a:-1.1,  w: 0.4 }
+            ];
+
+            let steer = 0;
+
+            for (let s of samples) {
+                let ang = bot.angle + s.a;
+                let d = checkRay(bot, ang); // ← EZ MOST HELYES
+
+                if (d < 120) {
+                    steer -= s.a * (120 - d) / 120 * s.w;
+                }
+            }
+            return steer;
+        }
+
+
+        function endRound(idx) {
+            if (idx === 0) score.p2++; else score.p1++;
+            scoreBoard.innerText = `P1: ${score.p1} | P2: ${score.p2}`;
+            resetRound();
+        }
+
+        function resetRound() {
+            bullets = []; generateMaze();
+            tanks = [
+                new Tank(80, 80, "#3498db", {up:'ArrowUp', down:'ArrowDown', left:'ArrowLeft', right:'ArrowRight', shoot:'Space'}),
+                new Tank(canvas.width-80, canvas.height-80, "#e74c3c", {up:'KeyW', down:'KeyS', left:'KeyA', right:'KeyD', shoot:'KeyQ'})
+            ];
+        }
+
+        function startGame(mode) {
+            gameMode = mode; score = {p1:0, p2:0}; scoreBoard.innerText = "P1: 0 | P2: 0";
+            menu.style.display='none'; canvas.style.display='block'; gameUI.style.display='block';
+            gameActive=true; resetRound(); requestAnimationFrame(gameLoop);
+        }
+
+        function backToMenu() { gameActive=false; menu.style.display='block'; canvas.style.display='none'; gameUI.style.display='none'; }
+
+        function gameLoop() {
+            if (!gameActive) return;
+            ctx.clearRect(0,0,canvas.width,canvas.height);
+            ctx.fillStyle="#888";
+            walls.forEach(w => { ctx.fillRect(w.x,w.y,w.w,w.h); ctx.strokeStyle="#555"; ctx.strokeRect(w.x,w.y,w.w,w.h); });
+            tanks[0].update();
+            if(gameMode==='multi') tanks[1].update(); else botAI();
+            tanks.forEach(t=>t.draw());
+            bullets = bullets.filter(b => Date.now()-b.birth < 10000);
+            bullets.forEach(b => { b.update(); b.draw(); });
+            requestAnimationFrame(gameLoop);
+        }
+    </script>
+</body>
+</html>
