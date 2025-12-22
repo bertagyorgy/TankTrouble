@@ -152,15 +152,16 @@
 
             for (let r = 1; r < ROWS; r++) {
                 for (let c = 1; c < COLS; c++) {
-                    if (Math.random() > 0.82) walls.push({x: c*CELL_SIZE, y: r*CELL_SIZE, w: CELL_SIZE, h: 12});
-                    if (Math.random() > 0.82) walls.push({x: c*CELL_SIZE, y: r*CELL_SIZE, w: 12, h: CELL_SIZE});
+                    // Magasabb esély (0.75) a falakra = sűrűbb pálya
+                    if (Math.random() > 0.75) walls.push({x: c*CELL_SIZE, y: r*CELL_SIZE, w: CELL_SIZE, h: 14});
+                    if (Math.random() > 0.75) walls.push({x: c*CELL_SIZE, y: r*CELL_SIZE, w: 14, h: CELL_SIZE});
                 }
             }
             walls = walls.filter(w => {
                 let d1 = Math.hypot(w.x - 80, w.y - 80);
                 let d2 = Math.hypot(w.x - (canvas.width-80), w.y - (canvas.height-80));
                 let isFrame = w.x === 0 || w.y === 0 || w.x >= canvas.width-15 || w.y >= canvas.height-15;
-                return isFrame || (d1 > 160 && d2 > 160);
+                return isFrame || (d1 > 140 && d2 > 140);
             });
         }
 
@@ -336,4 +337,5 @@
         }
     </script>
 </body>
+
 </html>
